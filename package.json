@@ -1,0 +1,26 @@
+{
+  "name": "standup",
+  "version": "0.1.0",
+  "description": "Standup meeting companion CLI",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "standup": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "date-fns": "^4.4.0",
+    "picocolors": "^1.1.1"
+  }
+}
