@@ -52,7 +52,7 @@ export function fetchLog(repo: Repo, since: Date, until: Date): Commit[] {
       `--until=${until.toISOString()}`,
       "--format=%x00%H|%ad|%s",
       "--date=iso-strict",
-      "--name-only",
+      "--numstat",
     ],
     { cwd: repo.path, stdout: "pipe", stderr: "pipe" },
   );
@@ -65,10 +65,13 @@ export function fetchLog(repo: Repo, since: Date, until: Date): Commit[] {
   return parseLogOutput(result.stdout.toString(), repo.name);
 }
 
+const NUMSTAT_RE = /^(\d+|-)\t(\d+|-)\t(.+)$/;
+
 export function parseLogOutput(stdout: string, repo: string): Commit[] {
   const commits: Commit[] = [];
+  const text = stdout.replace(/\r/g, "");
 
-  for (const block of stdout.split("\u0000")) {
+  for (const block of text.split("\u0000")) {
     const lines = block.trim().split("\n").filter(Boolean);
     if (lines.length === 0) {
       continue;
@@ -81,12 +84,38 @@ export function parseLogOutput(stdout: string, repo: string): Commit[] {
     if (Number.isNaN(date.getTime())) {
       continue;
     }
+
+    const files: string[] = [];
+    let filesChanged = 0;
+    let insertions = 0;
+    let deletions = 0;
+
+    for (const line of lines.slice(1)) {
+      const match = NUMSTAT_RE.exec(line);
+      if (!match) {
+        continue;
+      }
+      files.push(match[3]!);
+      filesChanged += 1;
+      const added = Number(match[1]);
+      const removed = Number(match[2]);
+      if (!Number.isNaN(added)) {
+        insertions += added;
+      }
+      if (!Number.isNaN(removed)) {
+        deletions += removed;
+      }
+    }
+
     commits.push({
       repo,
       hash: parts[0]!,
       date,
       message: parts[2]!,
-      files: lines.slice(1),
+      files,
+      filesChanged,
+      insertions,
+      deletions,
     });
   }
 

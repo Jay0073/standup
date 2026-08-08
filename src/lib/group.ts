@@ -6,6 +6,9 @@ export interface Commit {
   date: Date;
   message: string;
   files: string[];
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
 }
 
 export type HourGroups = Map<string, Map<string, Commit[]>>;
@@ -75,4 +78,37 @@ export function countFilesByCommit(commits: Commit[]): FileCounts {
 
 function hourLabel(date: Date): string {
   return format(date, "HH:00");
+}
+
+const TYPE_RE = /^([a-z]+)(\([^)]*\))?:/;
+const KNOWN_TYPES = new Set([
+  "feat",
+  "fix",
+  "docs",
+  "refactor",
+  "perf",
+  "test",
+  "chore",
+  "build",
+  "ci",
+  "style",
+  "revert",
+]);
+
+export type CommitTypeCounts = Record<string, number>;
+
+export function countCommitTypes(commits: Commit[]): CommitTypeCounts {
+  const counts: CommitTypeCounts = {};
+  for (const commit of commits) {
+    const match = TYPE_RE.exec(commit.message);
+    let type = "other";
+    if (match) {
+      const raw = match[1]!;
+      type = KNOWN_TYPES.has(raw) ? raw : "other";
+    } else if (commit.message.startsWith("Merge")) {
+      type = "merge";
+    }
+    counts[type] = (counts[type] ?? 0) + 1;
+  }
+  return counts;
 }

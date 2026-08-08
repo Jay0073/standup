@@ -11,7 +11,16 @@ function commit(
   message: string,
   files: string[] = [],
 ): Commit {
-  return { repo, hash: "a".repeat(40), date, message, files };
+  return {
+    repo,
+    hash: "a".repeat(40),
+    date,
+    message,
+    files,
+    filesChanged: 1,
+    insertions: 1,
+    deletions: 0,
+  };
 }
 
 describe("groupCommitsByHour", () => {
