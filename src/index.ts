@@ -8,12 +8,14 @@ import { discoverRepos, fetchLog, type Repo } from "./lib/git.ts";
 import { renderSummary } from "./lib/format.ts";
 import { buildRepoDigests, describeTypes, formatStatsLine } from "./lib/digest.ts";
 import { generateNarratives, pickModel } from "./lib/ai.ts";
+import { renderDigestHtml, type DigestBlock } from "./lib/html.ts";
 
 const USAGE = `standup - summarize yesterday's commits across repositories
 
 Usage:
   standup [--since <date>] [--until <date>]
   standup --digest [--since <date>] [--until <date>]
+  standup --digest --open [--since <date>] [--until <date>]
 
 Scans the current directory for git repositories and prints commits
 grouped by repository and by hour, plus the most changed files.
@@ -21,6 +23,8 @@ grouped by repository and by hour, plus the most changed files.
 With --digest, writes a narrative report per repository: real git
 stats (commits, files, lines added/removed) plus an AI-written
 paragraph explaining what was done, generated through Groq.
+With --open, opens the digest in the browser as a data URL; nothing
+is written to disk.
 
 Environment:
   GROQ_API_KEY     Groq API key (required for --digest)
@@ -37,6 +41,7 @@ Options:
   --since <date>   Start of the range (default: yesterday 00:00)
   --until <date>   End of the range (default: today 00:00)
   --digest         Print the AI narrative report instead of the commit list
+  --open           Open the digest in the browser (implies --digest)
   --help           Show this help`;
 
 class CliError extends Error {}
@@ -45,11 +50,12 @@ interface CliArgs {
   since?: string;
   until?: string;
   digest: boolean;
+  open: boolean;
   help: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { digest: false, help: false };
+  const args: CliArgs = { digest: false, open: false, help: false };
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -59,6 +65,11 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
     if (arg === "--digest") {
+      args.digest = true;
+      continue;
+    }
+    if (arg === "--open") {
+      args.open = true;
       args.digest = true;
       continue;
     }
@@ -83,8 +94,68 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
+interface DigestData {
+  overall?: string;
+  blocks: DigestBlock[];
+}
+
+function buildDigestData(
+  digests: ReturnType<typeof buildRepoDigests>,
+  narratives: Map<string, string>,
+  overall: string | undefined,
+): DigestData {
+  const blocks: DigestBlock[] = digests.map((digest) => {
+    const top = digest.topFiles.slice(0, 5);
+    return {
+      name: digest.name,
+      statsLine: formatStatsLine(digest),
+      typesLine: describeTypes(digest.types),
+      narrative: narratives.get(digest.name) ?? "(no narrative)",
+      filesLine: top.length > 0
+        ? `Most changed: ${top.map((t) => `${t.count}x ${t.file}`).join(", ")}`
+        : "",
+    };
+  });
+  return { overall, blocks };
+}
+
+function renderPlainDigest(data: DigestData): string {
+  const lines: string[] = [];
+  if (data.overall) {
+    lines.push(pc.bold("Day summary"));
+    lines.push(data.overall);
+    lines.push("");
+  }
+  for (const block of data.blocks) {
+    lines.push(pc.bold(block.name));
+    lines.push(pc.cyan(block.statsLine));
+    lines.push(pc.dim(block.typesLine));
+    lines.push(block.narrative);
+    if (block.filesLine) {
+      lines.push(pc.dim(`  ${block.filesLine}`));
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
+}
+
+function openInBrowser(html: string): void {
+  const encoded = encodeURIComponent(html).replace(/'/g, "%27");
+  const url = `data:text/html;charset=utf-8,${encoded}`;
+  const result = Bun.spawnSync(
+    ["powershell.exe", "-NoProfile", "-Command", `Start-Process '${url}'`],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.toString().trim() || "failed to open browser");
+  }
+}
+
 async function runDigest(
   results: { repo: Repo; commits: ReturnType<typeof fetchLog> }[],
+  open: boolean,
+  since: Date,
+  until: Date,
 ): Promise<void> {
   const allCommits = results.flatMap((r) => r.commits);
   const fileCounts = countFilesByCommit(allCommits);
@@ -124,29 +195,28 @@ async function runDigest(
     );
   }
 
-  const lines: string[] = [];
-  if (overall) {
-    lines.push(pc.bold("Day summary"));
-    lines.push(overall);
-    lines.push("");
-  }
-  for (const digest of digests) {
-    lines.push(pc.bold(digest.name));
-    lines.push(pc.cyan(formatStatsLine(digest)));
-    lines.push(pc.dim(describeTypes(digest.types)));
-    const narrative = narratives.get(digest.name);
-    lines.push(narrative ?? pc.dim("(no narrative)"));
-    const top = digest.topFiles.slice(0, 5);
-    if (top.length > 0) {
-      lines.push(
-        pc.dim(
-          `  Most changed: ${top.map((t) => `${t.count}x ${t.file}`).join(", ")}`,
-        ),
-      );
+  const data = buildDigestData(digests, narratives, overall);
+
+  if (open) {
+    const html = renderDigestHtml(data.overall, data.blocks, rangeLabel(since, until));
+    try {
+      openInBrowser(html);
+    } catch (error) {
+      console.error(pc.yellow(`warning: could not open browser (${(error as Error).message}); printing digest instead`));
+      console.log(renderPlainDigest(data));
     }
-    lines.push("");
+    return;
   }
-  console.log(lines.join("\n").trimEnd());
+
+  console.log(renderPlainDigest(data));
+}
+
+function rangeLabel(since: Date, until: Date): string {
+  return `Commits from ${formatDay(since)} to ${formatDay(until)} \u00b7 generated by standup`;
+}
+
+function formatDay(date: Date): string {
+  return date.toISOString().slice(0, 10);
 }
 
 async function main(): Promise<void> {
@@ -155,6 +225,7 @@ async function main(): Promise<void> {
     since: sinceArg,
     until: untilArg,
     digest,
+    open,
     help,
   } = parseArgs(process.argv.slice(2));
   if (help) {
@@ -189,7 +260,7 @@ async function main(): Promise<void> {
   }
 
   if (digest) {
-    await runDigest(results);
+    await runDigest(results, open, since, until);
     return;
   }
 
