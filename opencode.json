@@ -1,8 +1,11 @@
 {
-    "$schema": "https://opencode.ai/config.json",
-    "permission": {
-      "*": "allow",
-      "bash": "ask",
-      "edit": "ask"
-    }
-  }
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "*": "allow",
+    "bash": "ask",
+    "edit": "ask"
+  },
+  "instructions": [
+    ".nuncio/spoken-report.md"
+  ]
+}
